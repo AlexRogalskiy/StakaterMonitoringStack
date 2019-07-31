@@ -1,0 +1,232 @@
+apiVersion: flux.weave.works/v1beta1
+kind: HelmRelease
+metadata:
+  name: domain-monitoring-po
+  namespace: monitoring
+spec:
+  releaseName: domain-monitoring-po
+  chart:
+    repository: https://kubernetes-charts.storage.googleapis.com
+    name: prometheus-operator
+    version: 5.11.0
+  values:
+    # to override the names
+    # provide a name in place of "prometheus-operator"
+    nameOverride: domain
+    # provide a name to substitute for the full names of resources
+    fullnameOverride: domain
+    
+    # Comman labels
+    commonLabels:
+      expose: "true"
+
+    # Global configurations
+    global:
+      rbac:
+        create: true
+        pspEnabled: true
+    
+    # Default rules configuration
+    defaultRules:
+      # these labels will be added to default rules metadata configuration 
+      labels:
+        kind: infra
+    
+    # Prometheus Operator configurations
+    # Prometheus additional alerts configuration
+    additionalPrometheusRules:
+      - name: fluentd-rules
+        additionalLabels:
+          kind: infra
+        groups:
+        - name: Fluentd
+          rules:
+          - alert: IncreasedFluentdRetryWait
+            expr: max_over_time(fluentd_output_status_retry_wait[1m]) > 1000
+            for: 20s
+            labels:
+              severity: critical    
+              kind: infra            
+            annotations:
+              description: 'Fluentd Output Status Retry Wait has increased from 1000 in 1 minute'
+              summary: Retry Wait Increased
+          - alert: IncreasedFluentdRetryCount
+            expr: rate(fluentd_output_status_retry_count[1m]) > 0.5
+            for: 20s
+            labels:
+              severity: critical     
+              kind: infra           
+            annotations:
+              description: 'Rate of Fluentd Output Retry Count has increased from 0.5 in 1m'
+              summary: Retry Wait Increased
+          - alert: IncreasedFluentdOutputBufferLength
+            expr: max_over_time(fluentd_output_status_buffer_queue_length[1m]) > 500
+            for: 10s
+            labels:
+              severity: critical
+              kind: infra
+            annotations:
+              description: 'Fluentd Output Status Buffer Queue length has increased from 500.'
+              summary: Fluentd Buffer Queue length Increased
+
+    prometheusOperator:
+      createCustomResource: false
+      serviceAccount:
+        name: <service-account-name>
+      kubeletService:
+        enabled: true
+    
+    # Prometheus Service Monitor
+    prometheus:
+      # Adding additional service monitors
+      additionalServiceMonitors:
+        - name: monitoring-fluentd
+          jobLabel: k8s-app
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: fluentd-elasticsearch
+          namespaceSelector:
+            matchNames:
+              - logging
+          endpoints:
+            - port: monitor-agent
+              scheme: http
+              interval: 20s
+              path: /metrics
+
+        - name: external-ingress
+          jobLabel: k8s-app
+          selector:
+            matchLabels:
+              k8s-app: external-ingress             
+          namespaceSelector:
+            matchNames:
+              - global
+          endpoints:
+            - port: metrics
+              interval: 30s
+        
+        - name: internal-ingress
+          jobLabel: k8s-app
+          selector:
+            matchLabels:
+
+              k8s-app: internal-ingress
+
+          namespaceSelector:
+            matchNames:
+              - global 
+          endpoints:
+          - port: metrics
+            interval: 30s
+      prometheusSpec:
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: ssd
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 6Gi
+            selector: {}
+
+      serviceAccount:
+        create: true
+      rbac:
+        roleNamespaces:
+          - monitoring
+          - kube-system
+          - default
+          - logging
+          - global
+      service:
+        labels:
+          expose: true
+        annotations:
+          config.xposer.domain.com/Domain: domain.com
+          config.xposer.domain.com/IngressNameTemplate: '{{.Service}}-{{.Namespace}}'
+          config.xposer.domain.com/IngressURLPath: /
+          config.xposer.domain.com/IngressURLTemplate: 'prometheus.{{.Namespace}}.{{.Domain}}'
+          xposer.domain.com/annotations: |-
+            kubernetes.io/ingress.class: external-ingress
+            ingress.kubernetes.io/rewrite-target: /
+            ingress.kubernetes.io/force-ssl-redirect: true
+            forecastle.domain.com/expose: true
+            forecastle.domain.com/icon: https://raw.githubusercontent.com/domain/ForecastleIcons/master/prometheus.png
+            forecastle.domain.com/appName: Prometheus  
+    
+
+    # Prometheus Service Monitor
+    grafana:
+      # to enable grafana sidecar dashboards
+      sidecar:
+        dashboards:
+          enabled: true
+      adminPassword: 'PASSWORD' # Replace with actual Password      
+      rbac:
+        create: true
+        # it will create rbac on namespace level
+        namespaced: true
+      ingress:
+        enabled: "true"
+        hosts:
+          - grafana.monitoring.domain.com
+        annotations:
+          kubernetes.io/ingress.class: "external-ingress"
+          ingress.kubernetes.io/rewrite-target: "/"
+          ingress.kubernetes.io/force-ssl-redirect: "true"
+          forecastle.domain.com/expose: "true"
+          forecastle.domain.com/icon: https://raw.githubusercontent.com/domain/ForecastleIcons/master/grafana.png
+          forecastle.domain.com/appName: Grafana
+
+    # KubeControllerManager Service Monitor
+    kubeControllerManager:
+      service:
+        selector: 
+          component: ""
+          k8s-app: "kube-controller-manager"
+
+    # KubeControllerManager Service Monitor
+    kubeEtcd:
+      service:
+        port: 4001
+        targetPort: 4001
+        selector:
+          component: ""
+          k8s-app: etcd-server
+
+    # KubeScheduler Service Monitor    
+    kubeScheduler:
+      enabled: false
+      service:
+        selector:
+          component: ""
+          k8s-app: kube-scheduler
+    # alertManager Configurations
+    alertmanager:
+      service:
+        annotations:
+          config.xposer.domain.com/Domain: domain.com
+          config.xposer.domain.com/IngressNameTemplate: '{{.Service}}-{{.Namespace}}'
+          config.xposer.domain.com/IngressURLPath: /
+          config.xposer.domain.com/IngressURLTemplate: 'alertmanager.{{.Namespace}}.{{.Domain}}'
+          xposer.domain.com/annotations: |-
+            kubernetes.io/ingress.class: external-ingress
+            ingress.kubernetes.io/rewrite-target: /
+            ingress.kubernetes.io/force-ssl-redirect: true
+            forecastle.domain.com/expose: true
+            forecastle.domain.com/icon: https://raw.githubusercontent.com/domain/ForecastleIcons/master/alert-manager.png
+            forecastle.domain.com/appName: Alert Manager
+
+      
+      alertmanagerSpec:
+        useExistingSecret: true
+        secrets:
+        - domain-alertmanager-config
+
+    
+    # CoreDns mapping
+    coreDns:
+      service:
+        port: 10055
+        targetPort: 10055
