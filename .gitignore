@@ -1,0 +1,6 @@
+*.dec
+*.dec.yaml
+charts
+requirements.lock
+*.tgz
+secret*.yaml

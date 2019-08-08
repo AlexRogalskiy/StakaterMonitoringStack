@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: domain-kube-etcd-events
+  labels:
+    app: domain-prometheus
+        
+    chart: prometheus-operator-5.0.13
+    release: domain-monitoring
+    heritage: "Tiller"
+    expose: "true"
+    
+spec:
+  jobLabel: component
+  selector:
+    matchLabels:
+      app: domain-kube-etcd-events
+      release: domain-monitoring
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
